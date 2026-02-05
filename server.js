@@ -1,13 +1,11 @@
 const express = require("express");
 const rateLimit = require("express-rate-limit");
+const path = require("path");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-/*
-  Light rate limiting
-  Keeps Render from melting if friends spam refresh
-*/
+// Rate limiter
 const limiter = rateLimit({
   windowMs: 60 * 1000,
   max: 80
@@ -16,99 +14,105 @@ const limiter = rateLimit({
 app.use(limiter);
 app.use(express.static("public"));
 
-/*
-  Utility: detect if input looks like a real URL
-*/
-function isLikelyURL(input) {
-  return input.includes(".") || input.startsWith("http");
-}
-
-/*
-  Lazy loader for heavy modules
-  Only loads fetch + cheerio when proxy route is actually used
-*/
+// Lazy-load modules
 let fetchModule = null;
 let cheerioModule = null;
 
 async function getModules() {
-  if (!fetchModule) {
-    fetchModule = require("node-fetch");
-  }
-  if (!cheerioModule) {
-    cheerioModule = require("cheerio");
-  }
-  return {
-    fetch: fetchModule,
-    cheerio: cheerioModule
-  };
+  if (!fetchModule) fetchModule = require("node-fetch");
+  if (!cheerioModule) cheerioModule = require("cheerio");
+  return { fetch: fetchModule, cheerio: cheerioModule };
 }
 
-/*
-  Proxy route
-*/
+// Detect if input is a URL
+function isLikelyURL(input) {
+  return input.includes(".") || input.startsWith("http");
+}
+
+// Proxy route
 app.get("/proxy", async (req, res) => {
   try {
     let target = req.query.url;
     if (!target) return res.status(400).send("No input provided.");
 
-    // If not a URL, redirect to Bing search
+    // Redirect non-URLs to Bing search
     if (!isLikelyURL(target)) {
       target = "https://www.bing.com/search?q=" + encodeURIComponent(target);
     }
-
-    // Add https if missing
     if (!target.startsWith("http")) {
       target = "https://" + target;
     }
 
     const { fetch, cheerio } = await getModules();
 
-    const response = await fetch(target, {
-      headers: {
-        "User-Agent": "Mozilla/5.0"
-      }
-    });
+    const response = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" } });
 
-    const body = await response.text();
-    const $ = cheerio.load(body);
+    // Get content type
+    const contentType = response.headers.get("content-type");
 
-    // Rewrite anchor links
-    $("a").each((_, el) => {
-      const href = $(el).attr("href");
-      if (!href) return;
+    if (!contentType) return res.status(500).send("No content type.");
 
-      if (href.startsWith("http")) {
-        $(el).attr("href", "/proxy?url=" + encodeURIComponent(href));
-      } else if (href.startsWith("/")) {
-        const origin = new URL(target).origin;
-        $(el).attr("href", "/proxy?url=" + encodeURIComponent(origin + href));
-      }
-    });
+    if (contentType.includes("text/html")) {
+      let body = await response.text();
+      const $ = cheerio.load(body);
 
-    // Rewrite forms
-    $("form").each((_, el) => {
-      const action = $(el).attr("action");
-      if (!action) return;
+      // Rewrite links
+      $("a").each((_, el) => {
+        const href = $(el).attr("href");
+        if (!href) return;
+        let absolute = href.startsWith("http") ? href : new URL(href, target).href;
+        $(el).attr("href", "/proxy?url=" + encodeURIComponent(absolute));
+      });
 
-      if (action.startsWith("http")) {
-        $(el).attr("action", "/proxy?url=" + encodeURIComponent(action));
-      }
-    });
+      // Rewrite forms
+      $("form").each((_, el) => {
+        const action = $(el).attr("action");
+        if (!action) return;
+        let absolute = action.startsWith("http") ? action : new URL(action, target).href;
+        $(el).attr("action", "/proxy?url=" + encodeURIComponent(absolute));
+      });
 
-    res.send($.html());
+      // Rewrite JS & CSS
+      $("link[rel='stylesheet']").each((_, el) => {
+        const href = $(el).attr("href");
+        if (!href) return;
+        let absolute = href.startsWith("http") ? href : new URL(href, target).href;
+        $(el).attr("href", "/proxy?url=" + encodeURIComponent(absolute));
+      });
 
+      $("script").each((_, el) => {
+        const src = $(el).attr("src");
+        if (!src) return;
+        let absolute = src.startsWith("http") ? src : new URL(src, target).href;
+        $(el).attr("src", "/proxy?url=" + encodeURIComponent(absolute));
+      });
+
+      res.set("Content-Type", "text/html");
+      res.send($.html());
+
+    } else if (
+      contentType.includes("text/css") ||
+      contentType.includes("application/javascript") ||
+      contentType.includes("text/javascript")
+    ) {
+      // Fetch CSS or JS files and send as-is
+      const body = await response.text();
+      res.set("Content-Type", contentType);
+      res.send(body);
+    } else {
+      // For images, videos, fonts, etc., pipe directly
+      const buffer = await response.buffer();
+      res.set("Content-Type", contentType);
+      res.send(buffer);
+    }
   } catch (err) {
     console.error(err);
     res.status(500).send("BlueNebula encountered turbulence.");
   }
 });
 
-/*
-  Health check route (helps Render stay calm)
-*/
-app.get("/health", (req, res) => {
-  res.send("BlueNebula online.");
-});
+// Health check
+app.get("/health", (req, res) => res.send("BlueNebula online."));
 
 app.listen(PORT, () => {
   console.log(`BlueNebula Gateway running on port ${PORT}`);
