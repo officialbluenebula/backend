@@ -1,11 +1,11 @@
 const express = require("express");
 const rateLimit = require("express-rate-limit");
-const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args)); // lazy import
+const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Rate limiting
-app.use(rateLimit({ windowMs: 60*1000, max: 120 }));
+app.use(rateLimit({ windowMs: 60 * 1000, max: 120 }));
 
 // Serve static files from public
 app.use(express.static("public"));
@@ -23,13 +23,7 @@ function crashPage(reason = "BlueNebula Error") {
 }
 
 // Blocked domains
-const BLOCKED_DOMAINS = [
-  "google.com",
-  "youtube.com",
-  "facebook.com",
-  "twitter.com",
-  // Add more heavy sites you want to block
-];
+const BLOCKED_DOMAINS = ["google.com", "youtube.com", "facebook.com", "twitter.com"];
 
 // Check if target is blocked
 function isBlocked(url) {
@@ -46,38 +40,65 @@ app.get("/proxy", async (req, res) => {
   try {
     let target = req.query.url;
 
-    // about:blank
+    // Handle about:blank
     if (!target || target === "about:blank") {
       return res.send(`<html><body style="background:#030a18;color:white;text-align:center;"><h1>Blank Page</h1></body></html>`);
     }
 
-    // If user inputs something not a URL, treat as Bing search
+    // If not full URL → default to Bing search
     if (!target.startsWith("http")) {
       target = "https://www.bing.com/search?q=" + encodeURIComponent(target);
     }
 
-    // Check blocked sites
+    // Check blocked domains
     if (isBlocked(target)) {
       return res.send(crashPage("This site is blocked by BlueNebula."));
     }
 
-    // Lazy fetch
-    const response = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" } });
+    // Lazy fetch with timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 120000); // 2 minutes
 
-    const contentType = response.headers.get("content-type") || "";
-    if (!contentType.includes("text/html")) {
-      res.set("Content-Type", contentType);
-      return response.body.pipe(res);
+    try {
+      const response = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" }, signal: controller.signal });
+      clearTimeout(timeout);
+
+      const contentType = response.headers.get("content-type") || "";
+      if (!contentType.includes("text/html")) {
+        res.set("Content-Type", contentType);
+        return response.body.pipe(res);
+      }
+
+      // Return HTML as-is
+      const html = await response.text();
+      res.set("Content-Type", "text/html");
+      return res.send(html);
+    } catch (err) {
+      console.warn("Primary fetch failed or timeout, switching to Fetch + Blob fallback:", err.message);
+
+      // FETCH + BLOB fallback
+      try {
+        const fallbackResp = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" } });
+        let html = await fallbackResp.text();
+
+        // Inline CSS & JS by simple regex replacement
+        html = html.replace(/<link rel="stylesheet" href="(.*?)"/g, (match, href) => {
+          return `<style>@import url('${href}');</style>`;
+        });
+        html = html.replace(/<script src="(.*?)"/g, (match, src) => {
+          return `<script src="${src}"></script>`;
+        });
+
+        res.set("Content-Type", "text/html");
+        return res.send(html);
+      } catch (fallbackErr) {
+        console.error("Fallback fetch failed:", fallbackErr.message);
+        return res.send(crashPage("Site unavailable or too heavy for BlueNebula."));
+      }
     }
-
-    // Return HTML as-is, no rewriting
-    const html = await response.text();
-    res.set("Content-Type", "text/html");
-    res.send(html);
-
-  } catch (err) {
-    console.error("Proxy error:", err.message);
-    res.send(crashPage("Site unavailable or too heavy."));
+  } catch (outerErr) {
+    console.error("Proxy route error:", outerErr.message);
+    res.send(crashPage("Unexpected error in BlueNebula proxy."));
   }
 });
 
