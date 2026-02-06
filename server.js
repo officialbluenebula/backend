@@ -4,136 +4,174 @@ const rateLimit = require("express-rate-limit");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Rate limiter
-const limiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: 80
-});
-app.use(limiter);
-
-// Allow CORS for local files, about:blank, and any origin
-app.use((req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*"); // allow all origins
-  res.setHeader("Access-Control-Allow-Methods", "GET,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  next();
-});
-
+app.use(rateLimit({ windowMs: 60 * 1000, max: 120 }));
 app.use(express.static("public"));
 
-// Lazy-load modules
-let fetchModule = null;
-let cheerioModule = null;
-async function getModules() {
-  if (!fetchModule) fetchModule = require("node-fetch");
-  if (!cheerioModule) cheerioModule = require("cheerio");
-  return { fetch: fetchModule, cheerio: cheerioModule };
+function crashPage(reason = "BlueNebula Overload") {
+  return `
+  <html>
+  <head>
+    <title>BlueNebula Crash</title>
+    <style>
+      body {
+        margin:0;
+        font-family:Arial;
+        background:linear-gradient(135deg,#030a18,#0d1f3d);
+        color:white;
+        display:flex;
+        align-items:center;
+        justify-content:center;
+        height:100vh;
+        text-align:center;
+      }
+      h1 { font-size:48px; }
+      p { opacity:0.8; }
+    </style>
+  </head>
+  <body>
+    <div>
+      <h1>BlueNebula Crash</h1>
+      <p>${reason}</p>
+      <p>This site may be too heavy for the Render Free galaxy.</p>
+    </div>
+  </body>
+  </html>
+  `;
 }
 
-// Check if string is likely a URL
 function isLikelyURL(input) {
   return input && (input.includes(".") || input.startsWith("http"));
 }
 
-// Proxy route
 app.get("/proxy", async (req, res) => {
+  const start = Date.now();
+
   try {
     let target = req.query.url;
 
-    // Handle about:blank or empty requests
+    // about:blank support
     if (!target || target === "about:blank") {
       return res.send(`
         <html>
-          <body style="background:#030a18;color:white;font-family:Arial;text-align:center;padding-top:50px;">
+          <body style="background:#030a18;color:white;font-family:Arial;text-align:center;padding-top:60px;">
             <h1>Blank Page</h1>
           </body>
         </html>
       `);
     }
 
-    // Redirect non-URLs to Bing search
+    // Bing fallback
     if (!isLikelyURL(target)) {
       target = "https://www.bing.com/search?q=" + encodeURIComponent(target);
     }
 
-    // Ensure proper scheme
-    if (!target.startsWith("http")) target = "https://" + target;
+    if (!target.startsWith("http")) {
+      target = "https://" + target;
+    }
 
-    const { fetch, cheerio } = await getModules();
-    const response = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" } });
+    // LAZY LOAD fetch only when needed
+    const fetch = (await import("node-fetch")).default;
+
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    const response = await fetch(target, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+      signal: controller.signal
+    });
+
+    clearTimeout(timeout);
 
     const contentType = response.headers.get("content-type") || "";
 
-    // HTML pages
-    if (contentType.includes("text/html")) {
-      let body = await response.text();
-      const $ = cheerio.load(body);
+    // CPU safety guard
+    if (Date.now() - start > 20000) {
+      return res.send(crashPage("Request timeout."));
+    }
 
-      // Rewrite links
+    // HTML handling (cheerio only loads here if needed)
+    if (contentType.includes("text/html")) {
+
+      const cheerio = (await import("cheerio")).default;
+      const html = await response.text();
+      const $ = cheerio.load(html);
+
+      // Remove CSP
+      $("meta[http-equiv='Content-Security-Policy']").remove();
+
+      // Rewrite anchors
       $("a").each((_, el) => {
         const href = $(el).attr("href");
         if (!href) return;
-        const absolute = href.startsWith("http") ? href : new URL(href, target).href;
-        $(el).attr("href", "/proxy?url=" + encodeURIComponent(absolute));
+        try {
+          const absolute = new URL(href, target).href;
+          $(el).attr("href", "/proxy?url=" + encodeURIComponent(absolute));
+        } catch {}
       });
 
-      // Rewrite forms
-      $("form").each((_, el) => {
-        const action = $(el).attr("action");
-        if (!action) return;
-        const absolute = action.startsWith("http") ? action : new URL(action, target).href;
-        $(el).attr("action", "/proxy?url=" + encodeURIComponent(absolute));
+      // Rewrite scripts
+      $("script[src]").each((_, el) => {
+        const src = $(el).attr("src");
+        try {
+          const absolute = new URL(src, target).href;
+          $(el).attr("src", "/proxy?url=" + encodeURIComponent(absolute));
+        } catch {}
       });
 
-      // Rewrite CSS links
+      // Rewrite stylesheets
       $("link[rel='stylesheet']").each((_, el) => {
         const href = $(el).attr("href");
-        if (!href) return;
-        const absolute = href.startsWith("http") ? href : new URL(href, target).href;
-        $(el).attr("href", "/proxy?url=" + encodeURIComponent(absolute));
+        try {
+          const absolute = new URL(href, target).href;
+          $(el).attr("href", "/proxy?url=" + encodeURIComponent(absolute));
+        } catch {}
       });
 
-      // Rewrite JS scripts
-      $("script").each((_, el) => {
-        const src = $(el).attr("src");
-        if (!src) return;
-        const absolute = src.startsWith("http") ? src : new URL(src, target).href;
-        $(el).attr("src", "/proxy?url=" + encodeURIComponent(absolute));
-      });
+      // Inject fetch/XHR rewrite
+      $("head").append(`
+        <script>
+          const f = window.fetch;
+          window.fetch = function(r,c){
+            if(typeof r==="string" && !r.startsWith("/proxy")){
+              r="/proxy?url="+encodeURIComponent(r);
+            }
+            return f(r,c);
+          };
+          const o = XMLHttpRequest.prototype.open;
+          XMLHttpRequest.prototype.open=function(m,u){
+            if(!u.startsWith("/proxy")){
+              u="/proxy?url="+encodeURIComponent(u);
+            }
+            return o.apply(this,[m,u]);
+          };
+        </script>
+      `);
 
       res.set("Content-Type", "text/html");
       return res.send($.html());
-
-    // File requests: CSS, JS, images, videos, fonts
-    } else if (
-      contentType.includes("text/css") ||
-      contentType.includes("application/javascript") ||
-      contentType.includes("text/javascript") ||
-      contentType.includes("image/") ||
-      contentType.includes("video/") ||
-      contentType.includes("font/") ||
-      contentType.includes("application/octet-stream")
-    ) {
-      const buffer = await response.buffer();
-      res.set("Content-Type", contentType);
-      return res.send(buffer);
-
-    // Fallback
-    } else {
-      const buffer = await response.buffer();
-      res.set("Content-Type", contentType || "application/octet-stream");
-      return res.send(buffer);
     }
 
+    // JS or CSS passthrough
+    if (contentType.includes("javascript") || contentType.includes("css")) {
+      const body = await response.text();
+      res.set("Content-Type", contentType);
+      return res.send(body);
+    }
+
+    // Stream everything else (images, fonts, media)
+    res.set("Content-Type", contentType);
+    response.body.pipe(res);
+
   } catch (err) {
-    console.error("Proxy error:", err);
-    res.status(500).send("BlueNebula encountered turbulence.");
+    console.error("BlueNebula error:", err.message);
+    res.send(crashPage("Heavy site detected or CPU overload."));
   }
 });
 
-// Health check
-app.get("/health", (req, res) => res.send("BlueNebula online."));
+app.get("/health", (req, res) => {
+  res.send("BlueNebula Online");
+});
 
 app.listen(PORT, () => {
-  console.log(`BlueNebula Gateway running on port ${PORT}`);
+  console.log("BlueNebula running on port " + PORT);
 });
