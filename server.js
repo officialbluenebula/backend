@@ -4,37 +4,35 @@ const rateLimit = require("express-rate-limit");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(rateLimit({ windowMs: 60 * 1000, max: 120 }));
+app.use(rateLimit({ windowMs: 60 * 1000, max: 150 }));
 app.use(express.static("public"));
 
-function crashPage(reason = "BlueNebula Overload") {
+function crashPage(reason = "BlueNebula Error") {
   return `
   <html>
-  <head>
-    <title>BlueNebula Crash</title>
-    <style>
-      body {
-        margin:0;
-        font-family:Arial;
-        background:linear-gradient(135deg,#030a18,#0d1f3d);
-        color:white;
-        display:flex;
-        align-items:center;
-        justify-content:center;
-        height:100vh;
-        text-align:center;
-      }
-      h1 { font-size:48px; }
-      p { opacity:0.8; }
-    </style>
-  </head>
-  <body>
-    <div>
-      <h1>BlueNebula Crash</h1>
-      <p>${reason}</p>
-      <p>This site may be too heavy for the Render Free galaxy.</p>
-    </div>
-  </body>
+    <head>
+      <title>BlueNebula Error</title>
+      <style>
+        body {
+          margin:0;
+          font-family:Arial;
+          background:linear-gradient(135deg,#030a18,#0d1f3d);
+          color:white;
+          display:flex;
+          align-items:center;
+          justify-content:center;
+          height:100vh;
+          text-align:center;
+        }
+        h1 { font-size:48px; }
+      </style>
+    </head>
+    <body>
+      <div>
+        <h1>BlueNebula</h1>
+        <p>${reason}</p>
+      </div>
+    </body>
   </html>
   `;
 }
@@ -44,12 +42,9 @@ function isLikelyURL(input) {
 }
 
 app.get("/proxy", async (req, res) => {
-  const start = Date.now();
-
   try {
     let target = req.query.url;
 
-    // about:blank support
     if (!target || target === "about:blank") {
       return res.send(`
         <html>
@@ -60,7 +55,6 @@ app.get("/proxy", async (req, res) => {
       `);
     }
 
-    // Bing fallback
     if (!isLikelyURL(target)) {
       target = "https://www.bing.com/search?q=" + encodeURIComponent(target);
     }
@@ -69,102 +63,77 @@ app.get("/proxy", async (req, res) => {
       target = "https://" + target;
     }
 
-    // LAZY LOAD fetch only when needed
+    // Lazy load fetch
     const fetch = (await import("node-fetch")).default;
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-
     const response = await fetch(target, {
-      headers: { "User-Agent": "Mozilla/5.0" },
-      signal: controller.signal
+      headers: {
+        "User-Agent": "Mozilla/5.0"
+      }
     });
-
-    clearTimeout(timeout);
 
     const contentType = response.headers.get("content-type") || "";
 
-    // CPU safety guard
-    if (Date.now() - start > 20000) {
-      return res.send(crashPage("Request timeout."));
-    }
-
-    // HTML handling (cheerio only loads here if needed)
-    if (contentType.includes("text/html")) {
-
-      const cheerio = (await import("cheerio")).default;
-      const html = await response.text();
-      const $ = cheerio.load(html);
-
-      // Remove CSP
-      $("meta[http-equiv='Content-Security-Policy']").remove();
-
-      // Rewrite anchors
-      $("a").each((_, el) => {
-        const href = $(el).attr("href");
-        if (!href) return;
-        try {
-          const absolute = new URL(href, target).href;
-          $(el).attr("href", "/proxy?url=" + encodeURIComponent(absolute));
-        } catch {}
-      });
-
-      // Rewrite scripts
-      $("script[src]").each((_, el) => {
-        const src = $(el).attr("src");
-        try {
-          const absolute = new URL(src, target).href;
-          $(el).attr("src", "/proxy?url=" + encodeURIComponent(absolute));
-        } catch {}
-      });
-
-      // Rewrite stylesheets
-      $("link[rel='stylesheet']").each((_, el) => {
-        const href = $(el).attr("href");
-        try {
-          const absolute = new URL(href, target).href;
-          $(el).attr("href", "/proxy?url=" + encodeURIComponent(absolute));
-        } catch {}
-      });
-
-      // Inject fetch/XHR rewrite
-      $("head").append(`
-        <script>
-          const f = window.fetch;
-          window.fetch = function(r,c){
-            if(typeof r==="string" && !r.startsWith("/proxy")){
-              r="/proxy?url="+encodeURIComponent(r);
-            }
-            return f(r,c);
-          };
-          const o = XMLHttpRequest.prototype.open;
-          XMLHttpRequest.prototype.open=function(m,u){
-            if(!u.startsWith("/proxy")){
-              u="/proxy?url="+encodeURIComponent(u);
-            }
-            return o.apply(this,[m,u]);
-          };
-        </script>
-      `);
-
-      res.set("Content-Type", "text/html");
-      return res.send($.html());
-    }
-
-    // JS or CSS passthrough
-    if (contentType.includes("javascript") || contentType.includes("css")) {
-      const body = await response.text();
+    // Stream non-HTML immediately
+    if (!contentType.includes("text/html")) {
       res.set("Content-Type", contentType);
-      return res.send(body);
+      return response.body.pipe(res);
     }
 
-    // Stream everything else (images, fonts, media)
-    res.set("Content-Type", contentType);
-    response.body.pipe(res);
+    // Lazy load cheerio only for HTML
+    const cheerio = (await import("cheerio")).default;
+    const html = await response.text();
+    const $ = cheerio.load(html);
+
+    // Remove CSP to allow scripts
+    $("meta[http-equiv='Content-Security-Policy']").remove();
+
+    // Rewrite links
+    $("a[href]").each((_, el) => {
+      try {
+        const href = $(el).attr("href");
+        const absolute = new URL(href, target).href;
+        $(el).attr("href", "/proxy?url=" + encodeURIComponent(absolute));
+      } catch {}
+    });
+
+    // Rewrite scripts
+    $("script[src]").each((_, el) => {
+      try {
+        const src = $(el).attr("src");
+        const absolute = new URL(src, target).href;
+        $(el).attr("src", "/proxy?url=" + encodeURIComponent(absolute));
+      } catch {}
+    });
+
+    // Rewrite styles
+    $("link[rel='stylesheet']").each((_, el) => {
+      try {
+        const href = $(el).attr("href");
+        const absolute = new URL(href, target).href;
+        $(el).attr("href", "/proxy?url=" + encodeURIComponent(absolute));
+      } catch {}
+    });
+
+    // Inject lightweight fetch rewrite
+    $("head").append(`
+      <script>
+        const originalFetch = window.fetch;
+        window.fetch = function(resource, config) {
+          if (typeof resource === "string" && !resource.startsWith("/proxy")) {
+            resource = "/proxy?url=" + encodeURIComponent(resource);
+          }
+          return originalFetch(resource, config);
+        };
+      </script>
+    `);
+
+    res.set("Content-Type", "text/html");
+    res.send($.html());
 
   } catch (err) {
-    console.error("BlueNebula error:", err.message);
-    res.send(crashPage("Heavy site detected or CPU overload."));
+    console.error("Proxy error:", err.message);
+    res.send(crashPage("The requested site may be too heavy or unreachable."));
   }
 });
 
