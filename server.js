@@ -4,7 +4,10 @@ const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Rate limiting
 app.use(rateLimit({ windowMs: 60*1000, max: 120 }));
+
+// Serve static files from public
 app.use(express.static("public"));
 
 // Crash page
@@ -19,9 +22,22 @@ function crashPage(reason = "BlueNebula Error") {
   </html>`;
 }
 
-// Simple URL validation
-function isLikelyURL(input) {
-  return input && (input.includes(".") || input.startsWith("http"));
+// Allowed domains (simplest approach)
+const ALLOWED_DOMAINS = [
+  "bing.com",
+  "example.com",
+  "wikipedia.org",
+  // Add more simple sites you want to allow
+];
+
+// Check if target is allowed
+function isAllowedSite(url) {
+  try {
+    const hostname = new URL(url).hostname.replace(/^www\./, "");
+    return ALLOWED_DOMAINS.some(domain => hostname.endsWith(domain));
+  } catch {
+    return false;
+  }
 }
 
 // Proxy route
@@ -34,26 +50,26 @@ app.get("/proxy", async (req, res) => {
       return res.send(`<html><body style="background:#030a18;color:white;text-align:center;"><h1>Blank Page</h1></body></html>`);
     }
 
-    // Force full URL
+    // If user inputs something not a URL, treat as Bing search
     if (!target.startsWith("http")) {
-      if (!isLikelyURL(target)) {
-        target = "https://www.bing.com/search?q=" + encodeURIComponent(target);
-      } else {
-        target = "https://" + target;
-      }
+      target = "https://www.bing.com/search?q=" + encodeURIComponent(target);
+    }
+
+    // Allow only Bing + small sites
+    if (!isAllowedSite(target)) {
+      return res.send(crashPage("Site blocked: Only Bing and simple sites are allowed."));
     }
 
     // Lazy fetch
     const response = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" } });
 
-    // Stream non-HTML (images, files)
     const contentType = response.headers.get("content-type") || "";
     if (!contentType.includes("text/html")) {
       res.set("Content-Type", contentType);
       return response.body.pipe(res);
     }
 
-    // Return HTML as-is (no rewriting) — this makes Bing and modern sites work
+    // Return HTML as-is, no rewriting
     const html = await response.text();
     res.set("Content-Type", "text/html");
     res.send(html);
