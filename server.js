@@ -52,12 +52,12 @@ app.get("/proxy", async (req, res) => {
 
     // Check blocked domains
     if (isBlocked(target)) {
-      return res.send(crashPage("This site is blocked by BlueNebula."));
+      return res.send(crashPage("This site is blocked by The Nerevion Team (TOO BIG OF A WEBSITE TRY LATER)."));
     }
 
     // Lazy fetch with timeout
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 120000); // 2 minutes
+    const timeout = setTimeout(() => controller.abort(), 45000); // 2 minutes
 
     try {
       const response = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" }, signal: controller.signal });
@@ -74,7 +74,7 @@ app.get("/proxy", async (req, res) => {
       res.set("Content-Type", "text/html");
       return res.send(html);
     } catch (err) {
-      console.warn("Primary fetch failed or timeout, switching to Fetch + Blob fallback:", err.message);
+      console.warn("BlueNebula Proxy Server failed or timeout, switching to Voltz method:", err.message);
 
       // FETCH + BLOB fallback
       try {
@@ -92,7 +92,7 @@ app.get("/proxy", async (req, res) => {
         res.set("Content-Type", "text/html");
         return res.send(html);
       } catch (fallbackErr) {
-        console.error("Fallback fetch failed:", fallbackErr.message);
+        console.error("Voltz method failed:", fallbackErr.message);
         return res.send(crashPage("Site unavailable or too heavy for BlueNebula."));
       }
     }
