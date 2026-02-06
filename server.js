@@ -1,31 +1,27 @@
 const express = require("express");
 const rateLimit = require("express-rate-limit");
-const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
+const fetch = (...args) => import("node-fetch").then(({ default: f }) => f(...args));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Rate limiting
 app.use(rateLimit({ windowMs: 60 * 1000, max: 120 }));
-
-// Serve static files from public
 app.use(express.static("public"));
-
-// Crash page
-function crashPage(reason = "BlueNebula Error") {
-  return `
-  <html>
-    <head><title>BlueNebula</title></head>
-    <body style="background:#030a18;color:white;font-family:Arial;text-align:center;padding-top:60px;">
-      <h1>BlueNebula Crash</h1>
-      <p>${reason}</p>
-    </body>
-  </html>`;
-}
 
 // Blocked domains
 const BLOCKED_DOMAINS = ["google.com", "youtube.com", "facebook.com", "twitter.com"];
 
-// Check if target is blocked
+// Utility crash pages
+function crashPage(message) {
+  return `
+    <html>
+      <head><title>BlueNebula</title></head>
+      <body style="background:#030a18;color:white;font-family:Arial;text-align:center;padding-top:60px;">
+        <h1>${message}</h1>
+      </body>
+    </html>
+  `;
+}
+
 function isBlocked(url) {
   try {
     const hostname = new URL(url).hostname.replace(/^www\./, "");
@@ -37,27 +33,27 @@ function isBlocked(url) {
 
 // Proxy route
 app.get("/proxy", async (req, res) => {
-  try {
-    let target = req.query.url;
+  let target = req.query.url;
 
-    // Handle about:blank
-    if (!target || target === "about:blank") {
-      return res.send(`<html><body style="background:#030a18;color:white;text-align:center;"><h1>Blank Page</h1></body></html>`);
-    }
+  // About:blank
+  if (!target || target === "about:blank") {
+    return res.send(`<html><body style="background:#030a18;color:white;text-align:center;"><h1>Blank Page</h1></body></html>`);
+  }
 
-    // If not full URL → default to Bing search
-    if (!target.startsWith("http")) {
-      target = "https://www.bing.com/search?q=" + encodeURIComponent(target);
-    }
+  // Not full URL → Bing search
+  if (!target.startsWith("http")) {
+    target = "https://www.bing.com/search?q=" + encodeURIComponent(target);
+  }
 
-    // Check blocked domains
-    if (isBlocked(target)) {
-      return res.send(crashPage("This site is blocked by The Nerevion Team (TOO BIG OF A WEBSITE TRY LATER)."));
-    }
+  // Blocked sites
+  if (isBlocked(target)) {
+    return res.send(crashPage("This site is blocked by BlueNebula."));
+  }
 
-    // Lazy fetch with timeout
+  // Lazy fetch functions
+  const lazyFetchPrimary = async () => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 45000); // 2 minutes
+    const timeout = setTimeout(() => controller.abort(), 45000); // 45s
 
     try {
       const response = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" }, signal: controller.signal });
@@ -69,37 +65,49 @@ app.get("/proxy", async (req, res) => {
         return response.body.pipe(res);
       }
 
-      // Return HTML as-is
       const html = await response.text();
       res.set("Content-Type", "text/html");
-      return res.send(html);
-    } catch (err) {
-      console.warn("BlueNebula Proxy Server failed or timeout, switching to Voltz method:", err.message);
-
-      // FETCH + BLOB fallback
-      try {
-        const fallbackResp = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" } });
-        let html = await fallbackResp.text();
-
-        // Inline CSS & JS by simple regex replacement
-        html = html.replace(/<link rel="stylesheet" href="(.*?)"/g, (match, href) => {
-          return `<style>@import url('${href}');</style>`;
-        });
-        html = html.replace(/<script src="(.*?)"/g, (match, src) => {
-          return `<script src="${src}"></script>`;
-        });
-
-        res.set("Content-Type", "text/html");
-        return res.send(html);
-      } catch (fallbackErr) {
-        console.error("Voltz method failed:", fallbackErr.message);
-        return res.send(crashPage("Site unavailable or too heavy for BlueNebula."));
-      }
+      res.send(html);
+      return true;
+    } catch {
+      return false;
     }
-  } catch (outerErr) {
-    console.error("Proxy route error:", outerErr.message);
-    res.send(crashPage("Unexpected error in BlueNebula proxy."));
-  }
+  };
+
+  const lazyFetchFallback = async () => {
+    try {
+      const fallbackResp = await fetch(target, { headers: { "User-Agent": "Mozilla/5.0" } });
+      let html = await fallbackResp.text();
+
+      // Inline CSS & JS minimally
+      html = html.replace(/<link rel="stylesheet" href="(.*?)"/g, (match, href) => `<style>@import url('${href}');</style>`);
+      html = html.replace(/<script src="(.*?)"/g, (match, src) => `<script src="${src}"></script>`);
+
+      res.set("Content-Type", "text/html");
+      res.send(html);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Step 1: Try primary
+  const primarySuccess = await lazyFetchPrimary();
+  if (primarySuccess) return;
+
+  // Step 2: Primary failed or timed out → send switching message
+  res.write(crashPage("The BlueNebula server didn’t respond, switching over to the Voltz servers"));
+  res.flushHeaders();
+
+  // Small delay so message appears
+  await new Promise(r => setTimeout(r, 1000));
+
+  // Step 3: Fallback
+  const fallbackSuccess = await lazyFetchFallback();
+  if (fallbackSuccess) return;
+
+  // Step 4: Fallback failed → show message
+  res.send(crashPage("The Voltz servers failed please try again soon"));
 });
 
 // Health check
