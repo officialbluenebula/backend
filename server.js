@@ -22,19 +22,20 @@ function crashPage(reason = "BlueNebula Error") {
   </html>`;
 }
 
-// Allowed domains (simplest approach)
-const ALLOWED_DOMAINS = [
-  "bing.com",
-  "example.com",
-  "wikipedia.org",
-  // Add more simple sites you want to allow
+// Blocked domains
+const BLOCKED_DOMAINS = [
+  "google.com",
+  "youtube.com",
+  "facebook.com",
+  "twitter.com",
+  // Add more heavy sites you want to block
 ];
 
-// Check if target is allowed
-function isAllowedSite(url) {
+// Check if target is blocked
+function isBlocked(url) {
   try {
     const hostname = new URL(url).hostname.replace(/^www\./, "");
-    return ALLOWED_DOMAINS.some(domain => hostname.endsWith(domain));
+    return BLOCKED_DOMAINS.some(domain => hostname.endsWith(domain));
   } catch {
     return false;
   }
@@ -55,9 +56,9 @@ app.get("/proxy", async (req, res) => {
       target = "https://www.bing.com/search?q=" + encodeURIComponent(target);
     }
 
-    // Allow only Bing + small sites
-    if (!isAllowedSite(target)) {
-      return res.send(crashPage("Site blocked: Only Bing and simple sites are allowed."));
+    // Check blocked sites
+    if (isBlocked(target)) {
+      return res.send(crashPage("This site is blocked by BlueNebula."));
     }
 
     // Lazy fetch
@@ -80,6 +81,7 @@ app.get("/proxy", async (req, res) => {
   }
 });
 
+// Health check
 app.get("/health", (req, res) => res.send("BlueNebula Online"));
 
 app.listen(PORT, () => console.log("BlueNebula running on port " + PORT));
