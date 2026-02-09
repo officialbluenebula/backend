@@ -1,36 +1,43 @@
-export async function handler(event) {
-  const url = event.queryStringParameters?.url;
+// functions/proxy.js
+import fetch from "node-fetch";
 
-  if (!url) {
-    return {
-      statusCode: 400,
-      body: "No URL provided"
-    };
-  }
-
+export async function handler(event, context) {
   try {
-    const response = await fetch(url, {
+    const targetUrl = event.queryStringParameters?.url;
+    if (!targetUrl) {
+      return {
+        statusCode: 400,
+        body: "Missing 'url' query parameter",
+      };
+    }
+
+    // Fetch the target page
+    const res = await fetch(targetUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                      "(KHTML, like Gecko) Chrome/114.0 Safari/537.36"
       }
     });
 
-    const contentType = response.headers.get("content-type") || "text/html";
-    const body = await response.text();
+    let body = await res.text();
 
+    // Optional: fix relative URLs so CSS/JS/images still work
+    body = body.replace(/<head>/i, `<head><base href="${targetUrl}">`);
+
+    // Return the HTML
     return {
       statusCode: 200,
       headers: {
-        "Content-Type": contentType,
-        "Access-Control-Allow-Origin": "*"
+        "Content-Type": "text/html",
+        "X-Frame-Options": "ALLOWALL", // allow iframe embedding
+        "Content-Security-Policy": "frame-ancestors *", // allow any parent frame
       },
-      body
+      body,
     };
-
-  } catch (error) {
+  } catch (err) {
     return {
       statusCode: 500,
-      body: "BlueNebula proxy failed"
+      body: `Proxy error: ${err.message}`,
     };
   }
 }
