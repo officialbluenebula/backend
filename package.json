@@ -1,0 +1,24 @@
+{
+  "name": "bluenebula-browser",
+  "version": "1.0.0",
+  "description": "BlueNebula proxy and browser frontend",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "netlify dev"
+  },
+  "dependencies": {
+    "node-fetch": "^3.4.1"
+  },
+  "engines": {
+    "node": "18.x"
+  },
+  "keywords": [
+    "netlify",
+    "proxy",
+    "serverless",
+    "blueNebula"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}
