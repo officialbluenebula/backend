@@ -2,7 +2,7 @@
   "name": "voltz-public-server",
   "version": "1.0.0",
   "description": "Voltz Public Server: BlueNebula proxy with 5-second ad overlay",
-  "main": "netlify/functions/hello.js",
+  "main": "netlify/functions/voltz.js",
   "type": "module",
   "scripts": {
     "start": "netlify dev",
