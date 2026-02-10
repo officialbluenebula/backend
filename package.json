@@ -1,11 +1,20 @@
 {
-  "name": "bnserver",
+  "name": "voltz-public-server",
   "version": "1.0.0",
-  "description": "BlueNebula Netlify backend",
-  "private": true,
-  "type": "commonjs",
-  "main": "index.js",
+  "description": "Voltz Public Server: Netlify proxy with 5-second ad overlay",
+  "main": "netlify/functions/hello.js",
+  "type": "module",
+  "scripts": {
+    "start": "netlify dev",
+    "build": "echo 'No build needed for static frontend'"
+  },
   "dependencies": {
-    "node-fetch": "^2.6.11"
+    "node-fetch": "^3.4.1"
+  },
+  "devDependencies": {
+    "netlify-cli": "^15.0.0"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }
