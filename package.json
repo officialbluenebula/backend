@@ -1,9 +1,11 @@
 {
-  "name": "bluenebula-browser",
+  "name": "bnserver",
   "version": "1.0.0",
-  "description": "BlueNebula proxy and browser frontend",
-  "type": "module",
-  "engines": {
-    "node": "18.x"
+  "description": "BlueNebula Netlify backend",
+  "private": true,
+  "type": "commonjs",
+  "main": "index.js",
+  "dependencies": {
+    "node-fetch": "^2.6.11"
   }
 }
