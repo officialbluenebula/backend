@@ -1,6 +1,9 @@
 [build]
+  # Folder for functions
   functions = "netlify/functions"
+  # Folder for static site (your index.html)
+  publish = "."
 
 [functions]
+  # Node version (latest LTS recommended)
   node_bundler = "esbuild"
-  external_node_modules = ["node-fetch"]
