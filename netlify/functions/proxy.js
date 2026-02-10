@@ -1,43 +1,33 @@
-// functions/proxy.js
-import fetch from "node-fetch";
-
-export async function handler(event, context) {
+export async function handler(event) {
   try {
     const targetUrl = event.queryStringParameters?.url;
     if (!targetUrl) {
-      return {
-        statusCode: 400,
-        body: "Missing 'url' query parameter",
-      };
+      return { statusCode: 400, body: "Missing url parameter" };
     }
 
-    // Fetch the target page
-    const res = await fetch(targetUrl, {
+    const response = await fetch(targetUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                      "(KHTML, like Gecko) Chrome/114.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0"
       }
     });
 
-    let body = await res.text();
+    let body = await response.text();
 
-    // Optional: fix relative URLs so CSS/JS/images still work
     body = body.replace(/<head>/i, `<head><base href="${targetUrl}">`);
 
-    // Return the HTML
     return {
       statusCode: 200,
       headers: {
         "Content-Type": "text/html",
-        "X-Frame-Options": "ALLOWALL", // allow iframe embedding
-        "Content-Security-Policy": "frame-ancestors *", // allow any parent frame
+        "X-Frame-Options": "ALLOWALL",
+        "Content-Security-Policy": "frame-ancestors *"
       },
-      body,
+      body
     };
-  } catch (err) {
+  } catch (error) {
     return {
       statusCode: 500,
-      body: `Proxy error: ${err.message}`,
+      body: "Proxy error: " + error.message
     };
   }
 }
