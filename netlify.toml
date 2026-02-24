@@ -1,9 +1,8 @@
 [build]
-  # Folder for functions
-  functions = "netlify/functions"
-  # Folder for static site (your index.html)
   publish = "."
+  functions = "netlify/functions"
 
-[functions]
-  # Node version (latest LTS recommended)
-  node_bundler = "esbuild"
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/voltz"
+  status = 200
