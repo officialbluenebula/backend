@@ -1,20 +1,8 @@
 {
-  "name": "Voltz.js",
+  "name": "voltz-server",
   "version": "1.0.0",
-  "description": "Voltz Public Server: Netlify proxy with 5-second ad overlay",
-  "main": "netlify/functions/Voltz.js",
   "type": "module",
-  "scripts": {
-    "start": "netlify dev",
-    "build": "echo 'No build needed for static frontend'"
-  },
-  "dependencies": {
-    "node-fetch": "^3.3.1"
-  },
-  "devDependencies": {
-    "netlify-cli": "^15.0.0"
-  },
   "engines": {
-    "node": ">=18"
+    "node": "18.x"
   }
 }
