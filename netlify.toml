@@ -3,6 +3,11 @@
   functions = "netlify/functions"
 
 [[redirects]]
-  from = "/api/*"
+  from = "/api/public"
   to = "/.netlify/functions/voltz"
+  status = 200
+
+[[redirects]]
+  from = "/api/program"
+  to = "/.netlify/functions/voltz-programmable"
   status = 200
