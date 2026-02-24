@@ -1,6 +1,7 @@
 export async function handler(event) {
   try {
     const targetUrl = event.queryStringParameters?.url;
+
     if (!targetUrl) {
       return {
         statusCode: 400,
@@ -10,46 +11,60 @@ export async function handler(event) {
 
     const response = await fetch(targetUrl, {
       headers: {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "*/*"
+        "User-Agent": "Mozilla/5.0 (Voltz Public Server)"
       }
     });
 
-    const contentType = response.headers.get("content-type") || "";
-    const buffer = await response.arrayBuffer();
+    let html = await response.text();
 
-    // Handle HTML rewriting
-    if (contentType.includes("text/html")) {
-      let text = new TextDecoder().decode(buffer);
+    // Inject base tag so relative CSS/JS loads correctly
+    html = html.replace(/<head>/i, `<head><base href="${targetUrl}">`);
 
-      text = text.replace(
-        /<head>/i,
-        `<head><base href="${targetUrl}">`
-      );
+    // 5 Second Forced Ad Overlay
+    const adOverlay = `
+      <div id="voltz-ad" style="
+        position:fixed;
+        inset:0;
+        background:linear-gradient(135deg,#020817,#0b1e3a);
+        display:flex;
+        flex-direction:column;
+        align-items:center;
+        justify-content:center;
+        z-index:9999999;
+        color:white;
+        font-family:Arial;
+      ">
+        <img src="https://ik.imagekit.io/l7uslhlci/IMG_3858.jpeg"
+             style="max-width:320px;border-radius:16px;box-shadow:0 0 40px rgba(0,0,0,.5);">
+        <h2 style="margin-top:20px;">Voltz Public Server</h2>
+        <p>This server is loading your page…</p>
+        <p>Starting in 5 seconds</p>
+      </div>
 
-      return {
-        statusCode: response.status,
-        headers: {
-          "Content-Type": contentType
-        },
-        body: text
-      };
-    }
+      <script>
+        setTimeout(() => {
+          const ad = document.getElementById("voltz-ad");
+          if (ad) ad.remove();
+        }, 5000);
+      </script>
+    `;
 
-    // Handle other files (images, css, js)
+    // Inject after <body>
+    html = html.replace(/<body[^>]*>/i, match => match + adOverlay);
+
     return {
-      statusCode: response.status,
+      statusCode: 200,
       headers: {
-        "Content-Type": contentType
+        "Content-Type": "text/html",
+        "Access-Control-Allow-Origin": "*"
       },
-      body: Buffer.from(buffer).toString("base64"),
-      isBase64Encoded: true
+      body: html
     };
 
   } catch (err) {
     return {
       statusCode: 500,
-      body: "Proxy error: " + err.message
+      body: "Voltz Server Error: " + err.message
     };
   }
 }
